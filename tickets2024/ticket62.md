@@ -230,8 +230,6 @@ struct Base {
     int x = 10;
 
     std::function<void()> print = [&]() { std::cout << "x = " << x << "\n"; };
-    // std::function<void()> pretty_print = ....;
-    // std::function<void()> read = ....;
 };
 
 struct Derived : Base {
@@ -274,8 +272,6 @@ struct Base {
     }
 
     print_impl_ptr print_ptr = print_impl;
-    // pretty_print_impl_ptr pretty_print_ptr;
-    // read_impl_ptr read_ptr;
 
     void print() {
         print_ptr(this);
@@ -285,8 +281,8 @@ struct Base {
 struct Derived : Base {
     int y = 20;
 
-    static void print_impl(Base *b) {
-        Derived *d = static_cast<Derived *>(b);
+    static void print_impl(Base *b) { //здесь не можем сразу написать в параметрах что-то с Derived, так как создавали print_impl как указатель на Base и ничто другое
+        Derived *d = static_cast<Derived *>(b); //вот скастовать уже можем, так как уверены, что это действительно Derived - так создавали
         std::cout << "x = " << d->x << ", y = " << d->y << "\n";
     }
 
@@ -298,11 +294,12 @@ struct Derived : Base {
 int main() {
     Base b;
     Derived d;
-    b.print();
-    d.print();
+    b.print(); // x = 10
+    d.print(); // x = 10, y = 20
 
-    Base &db = d;
-    db.print();
+    Base &db = d; // ссылка на Base, но указывает на Derived
+    // вызывается метод Base::print(), но внутри вызывается print_ptr(this), а this — всё ещё Derived*
+    db.print(); // x = 10, y = 20
 
     std::cout << sizeof(Base) << ", " << sizeof(Derived) << "\n";
 
