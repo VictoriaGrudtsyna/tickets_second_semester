@@ -442,6 +442,37 @@ private:
      }
      ```
 
+   ### Что такое Static Initialization Order Fiasco
+   * Проблема возникает, когда в разных единицах трансляции есть non-local static объекты,
+     и их порядок инициализации при старте программы **не определён** стандартом.
+   * Например:
+     ```cpp
+     // a.cpp
+     #include <iostream>
+     #include "b.h"
+     Foo* f = new Foo;
+     int main() { useFoo(); }
+     ```
+     ```cpp
+     // b.cpp
+     #include <iostream>
+     extern Foo* f;
+     void useFoo() {
+       if (f) f->doSomething();  // UB, если f ещё не инициализирован
+     }
+     ```
+   * Здесь объект `f` в `a.cpp` и статический член в `b.cpp` могут быть инициализированы в непредсказуемом порядке → UB.
+   * Решения:
+     - Использовать function-local statics (инициализируются по first use и thread-safe в C++11+):
+       ```cpp
+       Foo& getFoo() {
+         static Foo instance;
+         return instance;
+       }
+       ```
+     - Явная функция инициализация или dependency injection.
+
+
 ---
 
 ## IV. Глобальные константы и статические константы-члены
@@ -477,3 +508,4 @@ private:
    - Non-inline `const` или `static` могут попасть в static init fiasco.
 
 </details>
+
