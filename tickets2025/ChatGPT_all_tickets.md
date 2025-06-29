@@ -2933,7 +2933,7 @@ void assert_failed(void) {
   Решение (GCC/Clang extension):
   ```c
   #define DEBUG_PRINT(fmt, ...)       printf("DEBUG: " fmt "
-", ##__VA_ARGS__)
+    ", ##__VA_ARGS__)
   ```
 
 ## IX. Проблемы с инициализатором списка в макросах
