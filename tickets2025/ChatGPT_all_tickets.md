@@ -107,3 +107,179 @@ A makeA() {
 2. **Copy elision** (RVO/NRVO) позволяет полностью **избежать** даже вызова перемещающих конструкторов при возврате по значению.  
 3. **`std::move`** — это лишь приведение типа, которое дает компилятору право выбрать move-версию функции.  
 4. Никогда **не** пишите `return std::move(foo);` без крайней необходимости — лучше довериться оптимизациям компилятора.
+
+</details>
+
+<details>
+<summary>
+11. Реализация своего std::vector
+</summary>
+
+## I. Размещение объектов и выравнивание
+- **Placement new**: позволяет сконструировать объект в заранее выделённом буфере:
+  ```cpp
+  void* raw = operator new[](sizeof(T) * capacity);
+  new (raw) T(value); // конструируем T в raw
+  ```
+- **Выравнивание**: важно, чтобы буфер был выровнен под `T`:
+  ```cpp
+  void* raw = operator new[](sizeof(T) * capacity, std::align_val_t(alignof(T)));
+  ```
+  Или использовать `std::allocator<T>::allocate`, который заботится об этом автоматически.
+- **Явный вызов деструктора**:
+  ```cpp
+  data[i].~T();
+  ```
+
+## II. Время жизни объектов
+- Объект T «жизненен» с момента конструкции (`new (ptr) T`) до вызова деструктора (`~T()`).
+- Любые обращения (чтение/запись/деструктуры) за пределами этого интервала — **undefined behaviour**.
+
+## III. Ref-qualifiers и перегрузка операторов
+Референс-квалификаторы `&` и `&&` позволяют раздать разные методы для lvalue- и rvalue-объекта:
+```cpp
+template<typename T, typename Alloc = std::allocator<T>>
+class vector {
+  // const-qualified доступ
+  const T& operator[](std::size_t i) const & noexcept {
+    return data_[i];
+  }
+  // lvalue-версия: реализуем через const_cast
+  T& operator[](std::size_t i) & noexcept {
+    return const_cast<T&>(static_cast<const vector&>(*this)[i]);
+  }
+  // rvalue-версия: возвращает T&&
+  T&& operator[](std::size_t i) && noexcept {
+    return std::move((*this)[i]);
+  }
+};
+```
+Это избавляет от дублирования кода и реализует семантику доступа как в `std::vector`.
+
+## IV. Перегрузка `push_back` и альтернативы
+### 1. Перегрузка на `const T&` и `T&&`
+```cpp
+void push_back(const T& value) & {
+  if(size_ == capacity_) reserve(capacity_ ? capacity_*2 : 1);
+  new (&data_[size_++]) T(value);
+}
+void push_back(T&& value) & {
+  if(size_ == capacity_) reserve(capacity_ ? capacity_*2 : 1);
+  new (&data_[size_++]) T(std::move(value));
+}
+```
+- Альтернатива **perfect forwarding** (`template<class... Args> emplace_back(Args&&... args)`): позволяет конструировать объект «in-place» без лишних копий.
+- **Отличие** от приёма по значению `push_back(T value)`: приёмы по значению могут приводить к лишнему копированию при lvalue-аргументах.
+
+### 2. Применение `const_cast` для уменьшения дублирования
+Можно вынести общую логику:
+```cpp
+template<class U>
+void push_back_impl(U&& value) {
+  if(size_ == capacity_) reserve(capacity_ ? capacity_*2 : 1);
+  new (&data_[size_++]) T(std::forward<U>(value));
+}
+void push_back(const T& v) & { push_back_impl(v); }
+void push_back(T&& v) &      { push_back_impl(std::move(v)); }
+```
+
+## V. Обеспечение гарантий при исключениях
+- **Базовая гарантия**: при ошибке внутреннее состояние остаётся корректным, но объекты могут быть разрушены.
+- При **увеличении буфера**:
+  1. Выделяем новый буфер `new_data` через `allocate`.
+  2. В цикле перемещаем (или копируем) старые элементы в `new_data` с помощью `new (… ) T(...)`.
+  3. Если в процессе бросилось исключение, нужно:
+     - Разрушить уже сконструированные в `new_data` объекты.
+     - Освободить `new_data`.
+     - Оригинальный буфер и объекты остаются нетронутыми.
+  4. Если всё успешно, вывести старые объекты, освободить старый буфер и присвоить `data_ = new_data`.
+
+## VI. Полный код `vector<T>`
+```cpp
+#pragma once
+#include <cstddef>
+#include <memory>
+#include <utility>
+#include <new>
+#include <cassert>
+
+template<typename T, typename Alloc = std::allocator<T>>
+class vector {
+public:
+  vector(): data_(nullptr), size_(0), capacity_(0) {}
+  ~vector() {
+    clear();
+    if(data_) alloc_.deallocate(data_, capacity_);
+  }
+
+  // копирование
+  vector(const vector& other): data_(nullptr), size_(0), capacity_(0) {
+    reserve(other.size_);
+    for(size_t i = 0; i < other.size_; ++i)
+      new (&data_[i]) T(other.data_[i]);
+    size_ = other.size_;
+  }
+  // перемещение
+  vector(vector&& other) noexcept
+    : data_(other.data_), size_(other.size_), capacity_(other.capacity_) {
+    other.data_ = nullptr;
+    other.size_ = other.capacity_ = 0;
+  }
+
+  // ref-qualifier оператор[]
+  const T& operator[](size_t i) const & noexcept {
+    return data_[i];
+  }
+  T& operator[](size_t i) & noexcept {
+    return const_cast<T&>(static_cast<const vector&>(*this)[i]);
+  }
+  T&& operator[](size_t i) && noexcept {
+    return std::move((*this)[i]);
+  }
+
+  size_t size() const noexcept { return size_; }
+  bool empty() const noexcept { return size_ == 0; }
+
+  void clear() noexcept {
+    for(size_t i = 0; i < size_; ++i)
+      data_[i].~T();
+    size_ = 0;
+  }
+
+  void reserve(size_t new_cap) {
+    if(new_cap <= capacity_) return;
+    T* new_data = alloc_.allocate(new_cap);
+    size_t i = 0;
+    try {
+      for(; i < size_; ++i)
+        new (&new_data[i]) T(std::move_if_noexcept(data_[i]));
+    } catch(...) {
+      for(size_t j = 0; j < i; ++j)
+        new_data[j].~T();
+      alloc_.deallocate(new_data, new_cap);
+      throw;
+    }
+    // разрушить старые и освободить
+    clear();
+    if(data_) alloc_.deallocate(data_, capacity_);
+    data_ = new_data;
+    capacity_ = new_cap;
+    size_ = i;
+  }
+
+  // push_back
+  template<class U>
+  void push_back_impl(U&& v) {
+    if(size_ == capacity_) reserve(capacity_ ? capacity_*2 : 1);
+    new (&data_[size_++]) T(std::forward<U>(v));
+  }
+  void push_back(const T& v) & { push_back_impl(v); }
+  void push_back(T&& v) &      { push_back_impl(std::move(v)); }
+
+private:
+  T* data_;
+  size_t size_, capacity_;
+  Alloc alloc_;
+};
+```
+</details>
