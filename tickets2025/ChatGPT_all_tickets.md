@@ -283,3 +283,176 @@ private:
 };
 ```
 </details>
+
+<details>
+<summary>
+12. Теоретическая и практическая всячина
+</summary>
+
+## I. Возвращаемый тип `auto` функций и методов
+
+1. **Вывод простого `auto`.**  
+   - В C++14 функции можно объявить с возвращаемым типом `auto` без явного указания:  
+     ```cpp
+     auto sum(int a, int b) {
+         return a + b; // возвращаемый тип deduced as int
+     }
+     ```
+   - Все операторы `return` должны возвращать одинаковую типизированную сущность, иначе компиляция упадёт.
+
+2. **`auto` с модификаторами.**  
+   - Можно добавлять cv-квалификаторы и ссылки:
+     ```cpp
+     auto& get_ref(int& x) { return x; }
+     auto&& create_temp() { return std::string("tmp"); }
+     ```
+
+3. **Рекурсивные функции.**  
+   - Для рекурсии нельзя полностью опустить возвращаемый тип, требуется **trailing return type**:
+     ```cpp
+     auto factorial(int n) -> int {
+         return (n < 2 ? 1 : n * factorial(n - 1));
+     }
+     ```
+
+4. **Удобство при определении методов вне класса.**  
+   - В заголовке:
+     ```cpp
+     struct S { auto f() -> int; };
+     ```
+   - В cpp:
+     ```cpp
+     auto S::f() -> int {
+         return 42;
+     }
+     ```
+
+5. **Объявления функций с `auto` без определения.**  
+   - Можно лишь объявить, а определить позже:
+     ```cpp
+     auto foo(int) -> double; // объявление
+     // ...
+     auto foo(int x) -> double {
+       return x * 2.5;
+     }
+     ```
+
+6. **Явное указание возвращаемого типа лямбды (C++14+).**  
+   ```cpp
+   auto lambda = [](int x) -> bool {
+       return x % 2 == 0;
+   };
+   ```
+
+---
+
+## II. Оператор `switch`
+
+1. **`break;` и `[[fallthrough]]`.**  
+   - По умолчанию переход идёт «впадину» (fall-through):
+     ```cpp
+     switch(n) {
+       case 1:
+         do1();
+         [[fallthrough]]; // явно разрешаем переход в case 2
+       case 2:
+         do2();
+         break;
+     }
+     ```
+   - `[[fallthrough]]` (C++17) сигнализирует об осознанном переходе.
+
+2. **Инициализация внутри `switch`.**  
+   - Переменные в `case` должны быть в блоке:
+     ```cpp
+     switch(n) {
+       case 1: {
+         int x = compute();
+         std::cout << x;
+         break;
+       }
+       case 2:
+         // …
+     }
+     ```
+
+---
+
+## III. Глобальные переменные/функции и статические поля-члены
+
+1. **`extern`**  
+   - Расшаривает объявление:
+     ```cpp
+     // header.h
+     extern int global_var;
+     // source.cpp
+     int global_var = 10;
+     ```
+
+2. **`static`** (на уровне namespace)  
+   - Старый способ internal linkage:
+     ```cpp
+     static void helper() { /* ... */ }
+     ```
+
+3. **Неявные агенты через unnamed namespace**  
+   - Аналог `static`:
+     ```cpp
+     namespace {
+       int helper_var = 0;
+     }
+     ```
+
+4. **`inline` переменные и функции (C++17).**  
+   - Можно определять в header без ODR-ошибок:
+     ```cpp
+     inline int inline_var = 5;
+     inline void inline_func() {}
+     ```
+   - Несколько определений в разных TU считаются одной сущностью.
+
+5. **Static initialization order fiasco.**  
+   - Порядок инициализации non-local static объектов в разных TU не определён → UB, если один использует другой в конструкторе.
+   - Обход через function-local statics (инициализируются по требованию в первом вызове):
+     ```cpp
+     MyType& get_instance() {
+       static MyType inst;
+       return inst;
+     }
+     ```
+
+---
+
+## IV. Глобальные константы и статические константы-члены
+
+1. **`constexpr` vs `const`.**  
+   - `constexpr` гарантирует константную инициализацию и может использоваться в compile-time выражениях.
+   - `const` на namespace-уровне имеет internal linkage по умолчанию (без `extern`).
+
+2. **`inline constexpr`.**  
+   - С C++17 статические константы можно объявить так:
+     ```cpp
+     inline constexpr double PI = 3.1415926535;
+     ```
+
+3. **Статические константы-члены класса.**  
+   - До C++17:
+     ```cpp
+     struct S {
+       static const int X = 42; // inline initialization allowed для integral
+     };
+     // Если берём адрес S::X, нужна еще одна дефиниция в cpp:
+     // const int S::X;
+     ```
+   - C++17+:
+     ```cpp
+     struct S {
+       inline static const int X = 42; // no separate definition
+     };
+     ```
+
+4. **Порядок инициализации.**  
+   - `constexpr` и inline переменные инициализируются константно до запуска любой функции.
+   - Non-inline `const` или `static` могут попасть в static init fiasco.
+
+</details>
