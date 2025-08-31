@@ -47,7 +47,7 @@ void no_op(int) {}
 // void no_op(double) {}
 
 int main() {
-    apply/*<void(*)int>*/(no_op);
+    apply/*<void(*)(int)>*/(no_op);
     apply/*<Print>*/(Print{});
     apply/*<Print>*/(Print{});
     apply/*<PrintTwice>*/(PrintTwice{});
