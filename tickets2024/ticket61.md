@@ -104,6 +104,55 @@ Class diagram:
 Синтаксис будет следующим:
 
 ```c++
+// #include <string>
+// #include <iostream>
+
+// struct Person {
+//     std::string name;
+//     Person(std::string name_) : name(std::move(name_)) {
+//         std::cout << "person" << "\n";
+//     }
+// };
+// struct Employee : virtual Person {
+//     std::string employer;
+//     Employee(std::string name_, std::string employer_) : Person(std::move(name_)), employer(std::move(employer_)) {
+//         std::cout << "employee" << "\n";
+//     }
+// };
+// struct Student : virtual Person {
+//     std::string group;
+//     Student(std::string name_, std::string group_) : Person(std::move(name_)), group(std::move(group_)) {
+//         std::cout << "student" << "\n";
+//     }
+// };
+// struct MagicStudent : /*Person, */ Employee, Student {
+//     MagicStudent(std::string name_, std::string employer_, std::string group_)
+//         : Person(std::move(name_)), 
+//         Employee(name_, std::move(employer_))
+//         , Student(name_, std::move(group_)) {
+
+//         } 
+// };
+
+// void hi_employee(Employee &e) {
+//     std::cout << "Hi, " << e.name << " employed by " << e.employer << "!\n";
+// }
+
+// void hi_student(Student &s) {
+//     std::cout << "Hi, " << s.name << " from group " << s.group << "!\n";
+// }
+
+// void hi_magic(MagicStudent &ms) {
+//     std::cout << "Wow, " << ms.name << " does not exist!\n"; 
+// }
+
+// int main() {
+//     MagicStudent ms("vika", "petya", 2);
+// }
+
+#include <iostream>
+#include <string>
+
 struct Person {
     std::string name;
     Person(std::string name_) : name(std::move(name_)) {
@@ -121,8 +170,8 @@ struct Student : virtual /* !!! */ Person {
 struct MagicStudent : Employee, Student {
     MagicStudent(std::string name_, std::string employer_, std::string group_)
         : Person(std::move(name_))
-        , Employee("", std::move(employer_))
-        , Student("", std::move(group_)) {}  
+        , Employee(name_, std::move(employer_))
+        , Student(name_, std::move(group_)) {}  
 };
 
 void hi_employee(Employee &e) {
@@ -135,6 +184,11 @@ void hi_student(Student &s) {
 
 void hi_magic(MagicStudent &ms) {
     std::cout << "Wow, " << ms.name << " does not exist!\n";
+}
+
+int main() {
+    MagicStudent ms("vika", "vika", "5");
+    return 0;
 }
 ```
 
@@ -383,4 +437,97 @@ struct Derived : X, Y {  // ok: X::foo(), Y::bar()
 
 ### Невозможность `static_cast` к наследнику от виртуальной базы
 
+```c++
+struct A { int a; };
+struct B : virtual A { int b; };
+struct C : virtual A { int c; };
+struct D : B, C { int d; };
+
+void casting_example() {
+    D d;
+    A* a_ptr = &d;  // OK - неявное преобразование
+    
+    // ОШИБКА: нельзя static_cast от виртуальной базы к наследнику - так сказали умные люди
+    // D* d_ptr = static_cast<D*>(a_ptr);  // Компиляционная ошибка!
+    
+    // Правильно через dynamic_cast (если есть виртуальные методы)
+    // D* d_ptr = dynamic_cast<D*>(a_ptr);
+}
+```
+
+### override + hiding
+```c++
+struct Base {
+    virtual void foo() {}
+    virtual ~Base() {}
+};
+
+struct Middle1 : virtual Base {
+    void foo() override {}  // OK
+};
+
+struct Middle2 : virtual Base {
+    void foo() override {}  // OK  
+};
+
+struct Final : Middle1, Middle2 {
+    void foo() override {}  // Должен переопределить оба, то есть hiding
+    // Без override будет ошибка неоднозначности
+};
+```
+
+### првиатное и защищенное наследование
+```c++
+#include <iostream>
+
+struct A { int a; };
+
+struct B : virtual private A {    // Виртуальное приватное
+    void test() { a = 1; }        // OK внутри класса
+};
+
+struct C : virtual protected A {  // Виртуальное защищённое  
+    void test() { a = 2; }        // OK внутри класса
+};
+
+struct D : B, C {
+    void test() {
+        a = 3;  // ОШИБКА: A недоступно из-за private/protected
+        B::a = 3;   // ОШИБКА: private наследование
+        C::a = 3;   // ОШИБКА: protected наследование
+    }
+};
+
+int main() {
+    return 0;
+}
+```
+
 ### В том числе при наличии одинаковых виртуальных функций в независимых базах
+```c++
+#include <iostream>
+
+struct Base1 {
+    virtual void foo() { std::cout << "Base1::foo()\n"; }
+    virtual ~Base1() {}
+};
+
+struct Base2 {
+    virtual void foo() { std::cout << "Base2::foo()\n"; }
+    virtual ~Base2() {}
+};
+
+struct Derived : virtual Base1, virtual Base2 {
+    // ОШИБКА: неоднозначность - какая foo()?
+    // void foo() override { std::cout << "Derived::foo()\n"; }
+};
+```
+
+##решение
+```c++
+struct Derived1 : virtual Base1, virtual Base2 {
+    void foo() override { 
+        Base1::foo();  // Явно вызываем Base1::foo()
+    }
+};
+```
