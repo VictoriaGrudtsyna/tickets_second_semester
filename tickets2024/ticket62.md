@@ -19,6 +19,75 @@
 Также, как и с полями – `private`, `protected` и `public`. Для классов наследование по умолчанию `private`,
 у структур – `public`. Влияет на то, кто понимает, что класс отнаследован от базового класса.
 
+ примерчик 
+```c++
+#include <iostream>
+
+class Base {
+public:
+    int x = 1;   // открыт для всех
+protected:
+    int y = 2;   // доступен только в Base и наследниках
+private:
+    int z = 3;   // доступен только в Base
+};
+
+// ====== PUBLIC наследование ======
+class PublicDerived : public Base {
+    // x остаётся public
+    // y остаётся protected
+    // z недоступен
+public:
+    void show() {
+        std::cout << "PublicDerived: x=" << x << ", y=" << y << std::endl;
+    }
+};
+
+// ====== PROTECTED наследование ======
+class ProtectedDerived : protected Base {
+    // x понижен до protected
+    // y остаётся protected
+    // z недоступен
+public:
+    void show() {
+        std::cout << "ProtectedDerived: x=" << x << ", y=" << y << std::endl;
+    }
+
+    // Если хотим, можем пробросить x наружу
+    using Base::x;  
+};
+
+// ====== PRIVATE наследование ======
+class PrivateDerived : private Base {
+    // x понижен до private
+    // y понижен до private
+    // z недоступен
+public:
+    void show() {
+        std::cout << "PrivateDerived: x=" << x << ", y=" << y << std::endl;
+    }
+};
+
+int main() {
+    PublicDerived pub;
+    pub.x = 10;       // OK: x остался public
+    pub.show();
+
+    ProtectedDerived prot;
+    // prot.x = 20;   // Ошибка: x стал protected
+    prot.show();
+    prot.x = 20;      // OK: пробросили наружу через using
+    prot.show();
+
+    PrivateDerived priv;
+    // priv.x = 30;   // Ошибка: x стал private
+    priv.show();
+
+    return 0;
+}
+
+```
+еще примерчик
 ```cpp
 struct Base {
     void foo() {
@@ -45,7 +114,7 @@ struct Derived22 : /* public */ Derived2 {
 struct Derived33 : /* public */ Derived3 {
     void bar() {
     // foo();
-    [[maybe_unused]] ::Base b;  // :: is important
+    [[maybe_unused]] ::Base b;  // :: is important - как из глобального пространства имен получается создаем Base
     // [[maybe_unused]] const ::Base &b2 = *this;
     // [[maybe_unused]] const ::Base &b3 = static_cast<const ::Base &>(*this);
     [[maybe_unused]] const ::Base &b4 =
@@ -54,6 +123,7 @@ struct Derived33 : /* public */ Derived3 {
     }
 };
 ```
+
 
 `private` – Derived3 знает, что он отнаследован от Base.
 
@@ -204,6 +274,8 @@ bigint(const std::string &s) {
 }
 bigint(int x) : bigint(std::to_string(x)) {  // Delegating constructor
     // bigint(std::to_string(x));  // bad attempt :(
+    // потому что создаем временный объект, а не делегируем что-то => UB
+   // делать через список инициализации - хорошо
     std::cout << "constructing from int " << x << "\n";
 }
 bigint() : bigint(0) {}
