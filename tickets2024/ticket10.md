@@ -11,6 +11,40 @@
 - `xvalue`: выражение, чьи ресурсы могут быть переиспользованы.
 - `rvalue`: из выражения можно мувать.
 
+```c++
+#include <iostream>
+#include <string>
+#include <utility> // std::move
+
+int foo() { return 42; }
+
+int main() {
+    int a = 10;
+
+    // --- lvalue ---
+    a = 20;              // a — lvalue (есть имя, адрес)
+    std::cout << a << "\n";  
+
+    // --- prvalue ---
+    int b = 5 + 7;       // (5 + 7) — prvalue, временное значение
+    std::string s = "hi"; // "hi" — prvalue (литерал)
+
+    // --- xvalue ---
+    std::string s1 = "hello";
+    std::string s2 = std::move(s1); // std::move(s1) — xvalue
+    // (s1 в состоянии "moved-from")
+
+    // --- glvalue ---
+    // glvalue = lvalue (a) или xvalue (std::move(a))
+    int* p = &a;         // &a работает, т.к. a — lvalue (glvalue)
+    *p = 33;
+
+    // --- rvalue ---
+    int x = foo();       // foo() возвращает 42 → prvalue → rvalue
+    int y = std::move(x); // std::move(x) → xvalue → rvalue
+}
+```
+
 Исключением является выражение `void()` — про него особо ничего не понятно.
 
 Ниже указана схема деления категорий выражений:
@@ -29,130 +63,37 @@
 └──────────────┴─────────────┴───────────────────┘
 ```
 
-
-Примеры xvalue, rvalue, lvalue.
-
-
-
-```c++
-int get_value() { // value
-    return 10;
-}
-
-int &get_ref() { // reference
-    static int x;
-    return x;
-}
-
-int &&get_rvalue_ref() { // rvalue-reference
-    static int x;
-    return std::move(x);
-}
-
-const int &get_cref() { // const reference
-    static int x;
-    return x;
-}
-
-int *get_ptr() { // pointer
-    static int x;
-    return &x;
-}
-
-int main() {
-    int a = 10;
-    int arr[5]{};
-    struct { int x, y; } s;
-    std::vector<int> vec(10);
-
-    // lvalue: "has name", "cannot be moved from because lives long enough"
-    std::cin;
-    a;
-    get_ref();
-    get_cref();  // type: const int
-    *get_ptr();
-    arr;
-    arr[4];  // `arr` should be lvalue
-    s.x;  // `s` should be lvalue
-
-    // prvalue: does not have name, "temporary" object
-    10;
-    get_value();
-    get_value() + 20;
-    &a;
-    static_cast<int>(10.5);
-    // `this` is also a prvalue.
-    []() { return 23; };
-
-    // xvalue: will expire soon, but has name
-    std::move(vec);
-    std::move(vec)[9];
-    std::move(s).x;
-    static_cast<std::vector<int>&&>(vec);  // std::move is almost exactly 
-that.
-    get_rvalue_ref();
-}
-```
-
-
-
 ### rvalue-ссылки и lvalue-ссылки: что к чему привязывается
 
 Тут все довольно просто: lvalue-ссылки могут привязываться только к `lvalue` значениям, а rvalue-ссылки только к `rvalue` значениям (то есть к `xvalue` и `prvalue`). Но есть некоторые нюансы с константными lvalue- и rvalue-ссылками. Ниже примеры кода, а также примеры с константыми ссылками:
 
 ```c++
-int& foo() {
-	static int z = 0;
-	return z;
+#include <iostream>
+#include <utility> // std::move
+
+int foo() { return 42; }
+
+int main() {
+    int a = 10;
+
+    // ===== LVALUE REFERENCES =====
+    int& lref = a;   // OK: lvalue-ссылка может привязаться к lvalue (переменной с именем)
+    std::cout << "lref=" << lref << "\n";
+
+    // int& bad1 = 5; // ❌ ошибка: нельзя привязать lvalue-ссылку к prvalue (литералу)
+    // int& bad2 = foo(); // ❌ ошибка: нельзя привязать к временному (prvalue)
+
+    const int& ok1 = 5;  // OK: const lvalue-ссылка может привязаться к rvalue (временное удлиняет жизнь)
+    const int& ok2 = foo(); // OK: то же самое
+
+    // ===== RVALUE REFERENCES =====
+    int&& rref1 = 5;       // OK: rvalue-ссылка к prvalue
+    int&& rref2 = foo();   // OK: rvalue-ссылка к prvalue (результат функции)
+    int&& rref3 = std::move(a); // OK: std::move превращает lvalue в xvalue → rvalue-ссылка может привязаться
+
+    // int&& bad3 = a; // ❌ ошибка: rvalue-ссылка не может привязаться напрямую к lvalue (обычной переменной)
 }
 
-int bar() {
-	static int z = 0;
-	return z;
-}
-
-int& bad_foo() {
-	int x = 10;
-	return x;  // no lifetime extension! dangling reference.
-}
-
-
-...
-
-int x = /* prvalue */ 10;
-x;  // lvalue
-std::move(x);  // xvalue
-
-// lvalue references, can only bind to lvalue
-// lvalue references можно привязать только к lvalue, нельзя к prvalue и к std::move(x).
-
-int &x1 = /* should be lvalue */ ((((x))));
-int &x2 = /* should be lvalue */ foo();
-// int &x3 = /* prvalue, CE */ bar();
-// int &x4 = /* prvalue */ (/* lvalue */ x + /* prvalue */ 10 + /* prvalue */ bar());  // CE
-// int &x5 = /* xvalue is rvalue, CE */ std::move(x);
-
-
-// rvalue references, can only bind to rvalue (xvalue + prvalue)
-// Lifetime extension ––> объект будет жить, пока жива ссылка.
-// std::move(/* prvalue */) ––> бессмысленно.
-
-int &&y1 = /* prvalue */ 10;
-int &&y2 = /* prvalue */ bar();  // lifetime extension: lifetime of the temporary is extended to lifetime of y2
-int &&y2b = /* xvalue */ std::move(/* prvalue */ bar());  // no lifetime extension, accessing y2b is UB.
-		// One should never move(prvalue).
-int &&y3 = /* xvalue */ std::move(x);
-// int &&y4 = /* lvalue, CE */ x;
-
-// const lvalue references, can bind anywhere for historical reasons
-const int &z1 = /* lvalue */ x;
-const int &z2 = /* prvalue */ 10;  // lifetime extension
-const int &z3 = /* xvalue */ std::move(x);  // move(x) == static_cast<int&&>(x) (well, almost)
-const int &z4 = bar();  // lifetime extension
-
-// Also possible, but mostly useless.
-const int &&zz1 = 10;
-// const int &&zz2 = /* lvalue, CE */ x1;
 ```
 
 
@@ -322,103 +263,6 @@ public:
 	~Bar(): 0xb6e3bff66d // `b2` destructor
 	~Bar(): 0xb6e3bff66e // `b1` destructor
 	```
-
-
-### Guaranteed copy elision в C++17 (как 'отключить' copy elision, temporary materialization, возврат неперемещаемых объектов из функции)
-
-Давайте также рассмотрим способы избежать (хотя неизвестно зачем, но ладно) copy elision (кстати, чтобы отключить `RVO/NRVO` совсем, можно использовать флаг компиляции `-fno-elide-constructors`):
-- Если у нас несколько return выражений в фукнции/методе, тогда `NRVO` скорее всего не сработает:
-	```c++
-	Bar create_bar_no_nrvo(int x) {
-		Bar f, g;
-		// probably no copy elision
-		if (x == 0) {
-			return f;
-		} else {
-			return g;
-		}
-	}
-	void consume(Bar consume_param) {
-		std::cout << "consumed " << &f << "\n";
-	}
-	...
-	int main() {
-		consume(create_bar_no_nrvo(0));
-	}
-	``` 
-	```js
-	Bar(): 0xc5579ff67f // inside create_bar_no_nrvo: constructed `f`
-	Bar(): 0xc5579ff67e // inside create_bar_no_nrvo: constructed `g`
-	Bar(Bar&&): 0xc5579ff6cf <- 0xc5579ff67f // create `consume_param` with move constructor and `f`
-	~Bar(): 0xc5579ff67e // inside create_bar_no_nrvo: destructed `g`
-	~Bar(): 0xc5579ff67f // inside create_bar_no_nrvo: destructed `f`
-	consumed 0xc5579ff6cf // `consume_param`
-	~Bar(): 0xc5579ff6cf // destructed `consume_param`
-	```
-- [Temporary materialization](https://en.cppreference.com/w/cpp/language/implicit_conversion#Temporary_materialization) — представляет собой автоматическую конвертацию значения объекта из `prvalue` категории в `xvalue`. 
-Рассмотрим ситуации, когда это проявляется:
-	```c++
-	Bar create_bar_rvo() {
-		return Bar();  // copy/move from prvalue is elided (RVO, return value optimization)
-	}
-
-
-	Bar &&pass_ref(Bar &&f) {  // Forces "temporary materialization" by binding a reference, now it's xvalue at best
-		std::cout << "pass_ref(Bar&&): arg is " << &f << "\n";
-		return std::move(f);
-	}
-
-	Bar pass_copy(Bar f) {  // Forces "temporary materialization" by binding a reference inside Bar(Bar&&)
-		std::cout << "pass_copy(Bar): arg is " << &f << "\n";
-		return f;  // no std::move to enable NRVO
-	}
-
-	void consume(Bar f) {
-		std::cout << "consumed " << &f << "\n";
-	}
-	```
-	Пример, в котором мы привязали rvalue-ссылку к аргументу функции:
-	```c++
-	...
-	int main() {
-		consume(pass_ref(create_bar_rvo()));
-	}
-	```
-	```js
-	Bar(): 0x4a7f9ffabf // RVO did its magic
-	pass_ref(Bar&&): arg is 0x4a7f9ffabf // here we have the same Bar
-	Bar(Bar&&): 0x4a7f9ffabe <- 0x4a7f9ffabf // temporary materialization happened here
-	consumed 0x4a7f9ffabe 
-	~Bar(): 0x4a7f9ffabe // when we quit all function calls destructors invoke
-	~Bar(): 0x4a7f9ffabf
-	```
-	Пример, в котором мы привязываем ссылку во время вызова move-конструктора (обратите внимание, что temporary materialization возник именно в мувающем конструкторе!):
-	```c++
-	...
-	int main() {
-		consume(pass_copy(create_bar_rvo()));
-	}
-	```
-	```js
-	Bar(): 0x6bfc9ff65f // RVO magic again
-	pass_copy(Bar): arg is 0x6bfc9ff65f // same Bar as on the line before
-	Bar(Bar&&): 0x6bfc9ff65e <- 0x6bfc9ff65f // temporary materialization happened here
-	consumed 0x6bfc9ff65e 
-	~Bar(): 0x6bfc9ff65e // when quit all function calls destructors invoke
-	~Bar(): 0x6bfc9ff65f
-	``` 
-	Более простой пример (на лекциях были те примеры, что я расписал выше, а этот взят из cpprefence), обращение к полям временных объектов:
-	```c++
-	struct S {
-		int m = 0;
-	};
-	int i = S().m; // member access expects glvalue as of C++17;
-									// S() prvalue is converted to xvalue
-	```
-	Подробный список случаев, в которых возникает temporary materialization, можно найти по ссылке на cppreference (ссылка в самом начале этого буллет-поинта).
-
-
-Возврат неперемещаемого объекта из функции возможен только копированием или с помощью guaranteed copy elision (частный случай `RVO`).
 
 ### Когда (не) надо писать return std::move(foo);
 
