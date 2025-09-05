@@ -73,16 +73,22 @@ print(output some text); // expands to: (cout << "output some text");
 4. Как использовать в своем фреймворке для `CHECK`:
 ```cpp
 // printOnError function:
+#include <iostream>
+#include <string>
 
-void printOnError(bool hasError, string expr, string filename, int line) {
+void printOnError(bool hasError, std::string expr, std::string filename, int line) {
 	if(hasError) {
-		cout << expr << "has failed in file: " << filename << ", on line: " << line << endl;
+		std::cout << expr << " has failed in file: " << filename << ", on line: " << line << std::endl;
 	}
 }
-```
-```cpp
+
 #define CHECK(expr) \
-	printOnError((!(expr)), #expr, __FILE__, __LINE__)
+	printOnError(!(expr), #expr, __FILE__, __LINE__)
+
+int main() {
+    CHECK(2+2 == 5);
+    return 0;
+}
 ```
 
 
