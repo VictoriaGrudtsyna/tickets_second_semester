@@ -56,7 +56,8 @@ ld";
 
 ## Как пользоваться `#ifdef DEBUG`, `#define` и ключом `-DDEBUG` (в случае GCC/Clang).
 
-Можно ограничить выполнение части кода и «запускать» ее только в режиме DEBUG.
+Можно ограничить выполнение части кода и «запускать» ее только в режиме DEBUG. Если при компиляции определён DEBUG (g++ -DDEBUG ...),
+то debug_only превращается в пустоту. Если DEBUG не определён, то debug_only превращается в if (false)
 
 ```cpp
 #ifdef DEBUG
@@ -95,20 +96,23 @@ int main() {
 поведение программы.
 
 ```cpp
-#define VALUE 123
+#include <iostream>
+#define SOME_VAR 123
+#define VALUE 456
 
-#ifdef SOME_VAR
-std::cout << "SOME_VAR was defined\n";
-#else
-std::cout << "SOME_VAR was not defined\n";
-#endif
+int main() {
+    #ifdef SOME_VAR
+    std::cout << "SOME_VAR was defined\n" << SOME_VAR;
+    #else
+    std::cout << "SOME_VAR was not defined\n";
+    #endif
 
-std::cout << VALUE << "\n";
-// std::cout << SOME_VAR << "\n";  // SOME_VAR is replaced with nothing
+    std::cout << VALUE << "\n";
 
-#if defined(SOME_VAR) && 1 >= 2 && VALUE == 120 + 3
-std::cout << "x\n";
-#endif
+    #if defined(SOME_VAR) && 1 >= 2 && VALUE == 120 + 3
+    std::cout << "x\n";
+    #endif
+}
 ```
 
 Также есть предопределенные макросы (например, `__cplusplus` — номер стандарта). Активно используются в
@@ -176,16 +180,20 @@ for an example
 Препроцессору плевать на синтаксис! Например, тут мы ожидаем увидеть 9, а получаем 7.
 
 ```cpp
+#include <iostream>
+
 #define THREE 1 + 2
 #define ZERO 1 - 1
 
-std::cout << THREE * 3 << "\n"; // 7
+int main() {
+    std::cout << THREE * 3 << "\n"; // 7
 
-#if ZERO
-std::cout << "Zero is the truth\n"; // true
-#else
-std::cout << "Zero is the lie\n";
-#endif
+    #if ZERO
+    std::cout << "Zero is the truth\n"; // true
+    #else
+    std::cout << "Zero is the lie\n";
+    #endif
+}
 ```
 
 ## Проблемы с макросами из нескольких statement и трюк с `do { } while(0)`
@@ -207,6 +215,7 @@ int foo() {
 int main() {
     std::cout << max(2, 1) << "\n";  // No brackets => ((std::cout << 2) < 
 1) ? 2 : 1 << "\n";
+	// приоритет у вывода больше!!
 		// need --> (a < b ? a : b)
     std::cout << mul(2 + 1, 2) << "\n";  // No brackets => 2 + 1 * 2
 		// need ((a) < (b) ? (a) : (b))
@@ -234,6 +243,7 @@ int main() {
     print_twice(500);
     if (2 * 2 == 5)
         print_twice(123); // 123 printed once !
+	// потому что один print_twice находится под действием if, а другой - нет
 }
 ```
 
@@ -255,7 +265,7 @@ print_twice(x) do { std::cout << x; std::cout << x; } while (0)
 ```cpp
 #include <cassert>
 
-void my_assert_1(bool expr) {
+void my_assert_1(bool expr) { // pass the calculated expression
     if (!expr) {
         std::cout << "Assertion failed: ???????\n";
     };
@@ -292,9 +302,10 @@ int main() {
     foo(1, 2, 3);
     
     // Oopses:
-    foo({ 1, 2, 3, 4 }); // 4 arguments ???
+    foo({ 1, 2, 3, 4 }); // {1, 2, 3, 4} считается одним аргументом
     foo(({ 1, 2, 3, 4 }), 5, 6);
-    foo(1, 2);  // Can be fixed with C++20's __VA_OPT__ or GCC's extension 
+    foo(1, 2);  // Can be fixed with C++20's __VA_OPT__ or GCC's extension
+	// тут не хватает аргументов, пустота - не аргумент
     of ##.
     foo(std::map<int, int>(), std::map<int, int>());
     foo((std::map<int, int>()), (std::map<int, int>()));
