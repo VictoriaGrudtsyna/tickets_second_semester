@@ -212,14 +212,14 @@ TEST_CASE() {  // Запомнили в thread-local переменную тек
 2) Счётчик ссылок внутри `p` потокобезопасен.
 3) `*p` не является потокобезопасным.
 
-В 1 и 2 пункте можно использовать мьютексы, если хотим что-то атомарно с ними делать.
+В 1 и 3 пунктах можно использовать мьютексы, если хотим что-то атомарно с ними делать.
 ```c++
 #include <iostream>
 #include <memory>
 #include <thread>
 
 int main() {
-    std::shared_ptr<int> p = std::make_unique<int>(10);
+    std::shared_ptr<int> p = std::make_shared<int>(10);
 
     std::thread t1([p]() {
         for (int i = 0; i < 100'000; i++) {
@@ -230,9 +230,9 @@ int main() {
 
     std::thread t2([p]() {
         for (int i = 0; i < 100'000; i++) {
-            auto p2 = p;
+            auto p2 = p; //так как здесь приравниваем p-шки, то их счетчики указателей тоже приравниваются
             ++*p;
-        }
+        } //здесь p2 умирает, так как выходит из области видимости, поэтому счетчик ссылок у p уменьшается
     });
 
     t1.join();
@@ -243,76 +243,29 @@ int main() {
     p = nullptr;  // No leaks.
 }
 ```
+
+Если что дружеское напоминание про shared_ptr для самых маленьких: объект — это квартира, shared_ptr — это ключ от квартиры, use_count() — количество ключей, квартиру сносят, когда возвращают последний ключ
 Итого, изменить `p` или значение, на которое он указывает без мьютексов — небезопасно, а вот создать `auto p1 = p` — на здоровье, хоть он и изменит `p.use_count()`.
 ### Проблема TOCTOU (Time-Of-Check To Time-Of-Use)
-Посмотрите на структуру ниже:
 ```c++
-#include <mutex>
+#include <iostream>
+#include <thread>
 
-struct list_node {
-private:
-    mutable std::mutex m;
-    
-    int data;
-    list_node *next = nullptr;
+int balance = 100; // Общий баланс
 
-public:
-    list_node(int new_data, list_node *new_next) : data(new_data), next(new_next) {}
-    
-    void set_next(list_node *new_next) {
-        std::unique_lock l(m);
-        next = new_next;
+void withdraw(int amount) {
+    if (balance >= amount) {          // Time of Check (TOC)
+        std::this_thread::sleep_for(std::chrono::milliseconds(1)); // Окно уязвимости - баланк за это время мог измениться в другом потоке!! можно чинить мьютексами
+        balance -= amount;             // Time of Use (TOU)
+        std::cout << "Снято " << amount << ". Баланс: " << balance << "\n";
     }
+}
+
+int main() {
+    std::thread t1(withdraw, 70);
+    std::thread t2(withdraw, 70);
     
-    list_node *get_next() {
-        // https://twitter.com/Nekrolm/status/1487060735305957379
-        // TOC-TOU is imminent!
-        std::unique_lock l(m);
-        return next;
-    }
-};
-```
-В ней всё хорошо.
-До момента, пока мы не попробуем начать ей пользоваться:
-```c++
-void append_after(list_node *x, int data) {
-    x->set_next(new list_node(data, x->get_next()));
+    t1.join(); t2.join();
+    std::cout << "Итог: " << balance; // Может быть -40!
 }
 ```
-Неатомарненько вышло — между тем, как получили `get_next()` и вызвали от него `set_next()`, наш `next` вполне мог измениться из другого потока и мы получим проблему схожую с той, когда два потока пытались делать `data++` и проигрывали.  
-Аналогичная проблема:
-```c++
-#include <cstddef>
-#include <mutex>
-#include <vector>
-#include <utility>
-
-template<typename T>
-struct atomic_vector {
-private:
-    mutable std::mutex m;
-    std::vector<T> v;
-
-public:
-    void push_back(const T &x) {
-        std::unique_lock l(m);
-        v.push_back(x);
-    }
-
-    void push_back(T &&x) {
-        std::unique_lock l(m);
-        v.push_back(std::move(x));
-    }
-
-    const T &operator[](std::size_t i) const {
-        std::unique_lock l(m);
-        return v[i];
-    }
-};
-
-void print(atomic_vector v){
-    std::cout << v[0];
-}
-```
-`print()` неатомарен — между получением `v[0]` и его передачей в `cout` он мог поменяться.  
-Общее решение — делать такие функции методами класса с продуманной реализацией (и мьютексами).
