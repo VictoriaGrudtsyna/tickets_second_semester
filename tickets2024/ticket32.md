@@ -11,45 +11,35 @@ void noexcept_guarantee() noexcept {
 Гарантируем, что исключений не будет. Поэтому например нельзя выделять память (на самом деле можно, если уверены, что не будет `bad_alloc`). В примере выше проверяем, что `cout` не выкинет исключений (без проверки использовать тоже нельзя).
 * #### strong (строгая)
 ```c++
-void strong_guarantee() {
-    std::vector<int> data(10);
-    do_something();
-    std::cout << "2+2=4\n";
+void strong_guarantee(std::vector<int>& vec, int value) {
+    std::vector<int> temp = vec;  // Работаем с копией
+    temp.push_back(value);        // Изменяем копию
+    if (value == 0) throw std::runtime_error("Zero!"); // Проверка
+    vec = std::move(temp);        // Подменяем оригинал ТОЛЬКО если всё успешно
 }
 ```
-В общем случае, если вылетело исключение, то состояние программы не поменялось вообще никак. То есть все изменения, которые произошли к вылету исключения, откатились назад. \
-В basic ниже перед исключением что-то вывелось на экран и это можно посчитать изменением состояния (при этом базовая гарантия только гарантирует, что не поменялся инвариант).
+Если исключение выброшено до последней строки, исходный вектор vec остаётся совершенно неизменным. Функция либо выполняется полностью, либо не делает ничего.
+В общем случае, если вылетело исключение, то состояние программы не поменялось вообще никак.\
 
 * #### basic (базовая)
 ```c++
-void basic_guarantee_1() {
-    std::cout << "2+2=\n";
-    std::vector<int> data(10);
-    do_something();
-    std::cout << "4\n";
+void basic_guarantee() {
+    std::unique_ptr<int> ptr = std::make_unique<int>(42); // RAII!
+    throw std::runtime_error("Oops!"); // Выбросили исключение
+    // Память автоматически освободится при выходе из области видимости
 }
 ```
-Базовая гарантия - гарантия, что инвариант программы сохранится. В примере выше успеет вывестись "2+2=" и затем вылетит исключение. \
-В примере ниже выведется "2+2=4" и затем вылетит исключение.
-```c++
-void basic_guarantee_2() {
-    std::cout << "2+2=4\n";
-    std::vector<int> data(10);
-    do_something();
-}
-```
+Исключение прерывает выполнение, но unique_ptr автоматически освобождает память в своём деструкторе. Ресурсы не утекают, но работа не завершена.
 
 * #### no (отсутствующая)
 ```c++
 void no_guarantee() {
-    std::cout << "2+2=";
-    int *data = new int[10];
-    do_something();
-    delete[] data;
-    std::cout << "4\n";
+    int* ptr = new int(42);  // Выделили память
+    throw std::runtime_error("Oops!"); // Выбросили исключение
+    delete ptr;              // Это никогда не выполнится - УТЕЧКА ПАМЯТИ!
 }
 ```
-Выделили память, потом вызвали какую-то функцию `do_something()`, почистили память. Если в функции `do_something()` вылетело исключение, то в нашей функции утечка память -> никакой гарантии. \
+Исключение прерывает выполнение. Память не освобождается. Ресурсы утекают. Программа в неопределённом состоянии.
 В общем случае, если может нарушиться инвариант программы и его не восстановить, то гарантии нет.
 
 ### Спецификатор `noexcept`, что происходит при выбрасывании исключения
@@ -236,44 +226,81 @@ public:
 ### Подвохи с базовой гарантией при реализации operator=(const&), если сделать подряд `delete[] data; data = new char[...]` (можно получить UB в деструкторе, чинить — сначала выделить, потом портить поля)
 Полные куски кода можно найти [тут](https://github.com/hse-spb-2021-cpp/lectures/blob/master/30-220606/03-more-exceptions/21-assignment-strong-safety.cpp)
 ```c++
-minivector &operator=(const minivector &other) {
-        if (this == &other) {  // Needed, otherwise we delete data.
-            return *this;
-        }
-        if (len != other.len) {
-            // incorrect
-            delete[] data;
-            // If it throws, we have UB. Workaround: `data = nullptr; len = 0;`
-            data = new int[other.len];
-        }
-        for (std::size_t i = 0; i < other.len; i++) {
-            data[i] = other.data[i];
-        }
-        return *this;
+minivector& operator=(const minivector &other) {
+    if (this == &other) return *this; // (1) Проверка на самоприсваивание
+    
+    if (len != other.len) {           // (2) Если размеры разные
+        delete[] data;                // (3) УДАЛИЛИ старый массив
+        data = new int[other.len];    // (4) Пытаемся выделить новый
     }
+    
+    for (std::size_t i = 0; i < other.len; i++) { // (5) Копируем данные
+        data[i] = other.data[i];
+    }
+    len = other.len;                  // (6) Обновляем длину
+    return *this;
+}
 ```
-Если вылетело исключение в строке с `new int`, то получится, что `data` указывает на какой-то освобожденный кусок памяти и длина у вектора ненулевая, то есть консистентность вектора не сохранится. Инвариант сломался, а значит базовой гарантии нет. 
+Если вылетело исключение в строке с `new int`, то получится, что `data` указывает на какой-то освобожденный кусок памяти, а длина у вектора ненулевая, то есть консистентность вектора не сохранится. Инвариант сломался, а значит базовой гарантии нет. 
+
+Решение: 
+```c++
+minivector& operator=(const minivector &other) {
+    if (this == &other) return *this; // (1) Проверка на самоприсваивание
+    
+    // (2) Сначала выделяем новый массив (не трогая старый!)
+    int* new_data = new int[other.len]; 
+    
+    // (3) Копируем данные в новый массив
+    for (std::size_t i = 0; i < other.len; i++) {
+        new_data[i] = other.data[i];
+    }
+    
+    // (4) ТОЛЬКО ПОСЛЕ успеха - подменяем старые данные на новые
+    delete[] data;   // Освобождаем старый массив
+    data = new_data; // Переключаем указатель
+    len = other.len; // Обновляем длину
+    
+    return *this;
+}
+```
 
 ### Обеспечение строгой гарантии исключений при помощи:
 
 * #### Полного копирование объекта
 (например, при реализации push_back)
-Это чинится, например, введением нового указателя до удаления:
 ```c++
-template<typename T>
-    void push_back(const T &value) &noexcept {
-        assert(len < C);
-        T copy = T(value);
-        new (&data[len]) T(value);
-        len++;
-    }
+class Vector {
+    int* data;
+    size_t size;
+    size_t capacity;
 
-    void push_back(T &&value) &noexcept {
-        assert(len < C);
-        T copy = T(std::move(value));
-        new (&data[len]) T(std::move(value));
-        len++;
+public:
+    void push_back(int value) {
+        if (size == capacity) {
+            // Создаем увеличенную копию ВООБЩЕ ВСЕГО
+            size_t new_capacity = capacity * 2 + 1;
+            int* new_data = new int[new_capacity]; // Может бросить bad_alloc
+            
+            // Копируем все элементы (может бросить исключение при копировании)
+            for (size_t i = 0; i < size; ++i) {
+                new_data[i] = data[i]; // Может бросить исключение
+            }
+            
+            // Добавляем новый элемент (может бросить исключение)
+            new_data[size] = value;    // Может бросить исключение
+            
+            // ТОЛЬКО ЗДЕСЬ меняем состояние объекта
+            delete[] data;       // Освобождаем старую память
+            data = new_data;     // Переключаем указатели
+            capacity = new_capacity;
+        } else {
+            // Просто добавляем в существующий массив
+            data[size] = value;  // Может бросить исключение
+        }
+        ++size;  // Обновляем размер
     }
+};
 ```
 
 
