@@ -91,6 +91,21 @@ void foo(const char *s) {
     // Problem: have to check immediately after each function. Does not propagate up.
 ```
 
+errno - глобальный флаг ошибок, так что с ним нужно быть аккуратнее
+```c++
+FILE *f = std::fopen("non_existent_file.txt", "r");
+// Допустим, здесь errno = ENOENT (No such file or directory)
+
+// А здесь мы делаем ЛЮБОЙ другой вызов, который может изменить errno:
+std::cout << "Что-то выводим"; // <- Внутри оператора вывода могут быть системные вызовы!
+// Например, если буфер stdout заполнен, внутри `cout` может произойти
+// системный вызов write(), который успешно выполнится и сбросит errno в 0.
+
+std::cout << "    f: " << f << ", errno: " << errno ... << "\n";
+// Теперь мы выводим errno = 0, хотя fopen на самом деле завершился ошибкой!
+// Мы получили неверную информацию об ошибке.
+```
+
 ### Исключения
 
 * `throw`: кидает исключение вместо `return`. После `throw` пишется какое-то значение (специальная структурка, но вообще можно кидать любой объект, кроме `incomplete type` и ссылок на временные объекты/`incomplete type` ([источник](https://stackoverflow.com/a/17786100))). Исключение летит до ближайшего по стеку вызовов подходящего `catch`, либо роняет программу, если его не нашлось. [Пример](https://github.com/hse-spb-2021-cpp/lectures/blob/master/15-220117/03-basic-exceptions/01-basic.cpp) 
@@ -134,19 +149,117 @@ int main() {
 	}  // no 'finally' block!
 }
 ```
+Важно ловить исключения по ссылке, иначе будет слайсинг
+```c++
+try {
+    throw std::runtime_error("Ошибка!"); // Бросаем объект runtime_error
+}
+catch (std::exception e) { // Ловим БАЗОВЫЙ класс по значению
+    std::cerr << e.what() << std::endl;
+}
+```
+*Если поймали объект производного класса (например, std::runtime_error) как объект базового класса (std::exception), то происходит нарезка. Копируется и создается только часть базового класса. Вся информация, специфичная для производного класса, теряется.
+
 * Вложенные `try/catch`: правило простое — сначала идём в `catch` ближайшего к нам `try` блока (**того, в котором мы находимся**), ищем подходящий `catch`, если не нашли — "вылетаем нафиг из функции". [Пример](https://github.com/hse-spb-2021-cpp/lectures/blob/master/15-220117/03-basic-exceptions/04-complex-try-block.cpp)
 
 * **Слайсинг**: исключения можно перебрасывать пустым `throw;` — тогда кидается текущее обрабатываемое исключение его родного типа. Если мы сначала поймали исключение `catch (const Base &a)`, а потом сделали `throw a;`, то выбросится исключение именно типа `Base`, даже если `a` было `Derived`. 
-	```c++
-	try {
-        throw std::runtime_error("Hello World");
-    } catch (std::exception &a) {
-        // throw a;  // oops, slicing
-        throw;  // no slicing
+```c++
+#include <iostream>
+#include <stdexcept>
+
+class MyError : public std::runtime_error {
+public:
+    MyError() : std::runtime_error("MyError happened!") {}
+};
+
+int main() {
+    try {
+        try {
+            std::cout << "1. Throwing MyError..." << std::endl;
+            throw MyError(); // Бросаем производный класс
+        }
+        catch (const std::exception& e) { // Ловим по ссылке на базовый
+            std::cout << "2. Caught in inner block as std::exception: " << e.what() << std::endl;
+            std::cout << "3. Doing empty throw..." << std::endl;
+            throw; // Ключевой момент: перебрасывается ОРИГИНАЛЬНЫЙ MyError
+        }
     }
-	```
+    catch (const MyError& e) { // Этот блок сработает!
+        std::cout << "4. Caught MyError in outer block: " << e.what() << std::endl;
+    }
+    catch (const std::exception& e) {
+        std::cout << "5. Caught std::exception in outer block: " << e.what() << std::endl;
+    }
+    return 0;
+}
+```
+
+```c++
+#include <iostream>
+#include <stdexcept>
+
+class MyError : public std::runtime_error {
+public:
+    MyError() : std::runtime_error("MyError happened!") {}
+};
+
+int main() {
+    try {
+        try {
+            std::cout << "1. Throwing MyError..." << std::endl;
+            throw MyError(); // Бросаем производный класс
+        }
+        catch (const std::exception& e) { // Ловим по ссылке на базовый
+            std::cout << "2. Caught in inner block as std::exception: " << e.what() << std::endl;
+            std::cout << "3. Doing throw e..." << std::endl;
+            throw e; // ФАТАЛЬНО: создается и бросается КОПИЯ типа std::exception
+        }
+    }
+    catch (const MyError& e) { // Этот блок НЕ сработает!
+        std::cout << "4. Caught MyError in outer block: " << e.what() << std::endl;
+    }
+    catch (const std::exception& e) { // Сработает этот блок
+        std::cout << "5. Caught std::exception in outer block: " << e.what() << std::endl;
+    }
+    return 0;
+}
+```
 
 * **Уничтожение локальных ресурсов:** Когда функция аварийно завершается, выбросив исключение, в ней вызываются деструкторы всех локальных переменных с automatic storage duration в корректном порядке, это и называется раскруткой стека. Другой вопрос — что происходит, когда исключение вылетает из деструктора. :)
+Пример:
+```c++
+#include <iostream>
+
+class Resource {
+public:
+    Resource(int id) : id(id) { std::cout << "Resource " << id << " acquired\n"; }
+    ~Resource() { std::cout << "Resource " << id << " released\n"; } // Деструктор НЕ бросает исключений!
+private:
+    int id;
+};
+
+void risky_operation() {
+    throw std::runtime_error("Something went wrong!");
+}
+
+void test_function() {
+    Resource r1(1); // Создается первым - уничтожится последним
+    Resource r2(2); // Создается вторым - уничтожится первым
+    
+    std::cout << "Before risky operation...\n";
+    risky_operation(); // Здесь вылетает исключение
+    std::cout << "This won't be printed\n";
+}
+
+int main() {
+    try {
+        test_function();
+    }
+    catch (const std::exception& e) {
+        std::cout << "Caught exception: " << e.what() << "\n";
+    }
+}
+```
 
 * Сказанное выше работает только в случае, если исключение было поймано. В противном случае, то, что происходит между последним `catch` и завершением программы — `implementation-defined`. [Пример, в котором можно закомментить `try/catch` в `main`](https://github.com/hse-spb-2021-cpp/lectures/blob/master/15-220117/03-basic-exceptions/01b-destructors.cpp)
 
