@@ -11,8 +11,8 @@
 #include <thread>
 
 int main() {
-    std::promise<std::string> input_promise;
-    std::future<std::string> input_future = input_promise.get_future();
+    std::promise<std::string> input_promise; //обещаем дать значение
+    std::future<std::string> input_future = input_promise.get_future(); //при помощи input_future будет получать обещания
 
     std::thread producer([&]() {
         std::string input;
@@ -21,8 +21,8 @@ int main() {
     });
 
     std::thread consumer([&]() {
-        std::cout << "Consumer started\n";
-        std::string input = input_future.get();
+        std::cout << "Consumer started\n"; //начинаем работать
+        std::string input = input_future.get(); //блокируемся, пока не получим обещание
         std::this_thread::sleep_for(std::chrono::milliseconds(2000));
         std::cout << "Got string: " << input << "\n";
     });
@@ -115,8 +115,8 @@ int main() {
         while (true) {
             std::unique_lock l(m);
             while (!input_available) {  // while, не if!
-                cond.wait(l);
-            }
+                cond.wait(l); //отпускаем мьютекс, ставим поток в состояние ожидания, то есть ждет notify_one или notify_all()
+            } //когда нас разбудили, захватываем мьютекс, который объявили выше, автоматически и делаем то, что написано ниже
             // Эквивалентная while конструкция, чтобы было сложнее набагать и были понятнее намерения.
             // cond.wait(l, []() { return input_available; });  // "ждём выполнения предиката".
             std::string input_snapshot = input;
@@ -155,7 +155,7 @@ struct user {
     }
 };
 ```
-В данном коде, функция `balnce()` - потокобезопасная и с *const* квалифаером, если бы *mutex* был не *mutable* - мы бы не могли так сделать.
+В данном коде, функция `balance()` - потокобезопасная и с *const* квалификатором, если бы *mutex* был не *mutable* - мы бы не могли так сделать. Как нетрудно догадаться, все остальное в методе balance_up остается неподвластным изменению
 ## Links:
 https://github.com/hse-spb-2021-cpp/exercises/tree/master/18-220207/solution - практика на эту тему
 https://github.com/hse-spb-2021-cpp/lectures/tree/master/18-220207 - лекция на эту тему.
