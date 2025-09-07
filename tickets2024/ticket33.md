@@ -100,52 +100,51 @@ int main() {
 Узнать тип или сделать что-то разумное с `exception_ptr` у нас нет, можем только `rethrow_exception()`(оно хочет не пустое исключение), а дальше ловить и обрабатывать как обычно
 
 ```c++
-struct my_exception {
-    int value;
-};
+#include <iostream>
+#include <exception>
+#include <stdexcept>
+#include <vector>
 
-void foo(int x) {
-    throw my_exception{x + 10};
+std::exception_ptr saved_exception; // Хранилище для исключения
+
+void dangerous_function() {
+    throw std::runtime_error("Something went wrong!");
+}
+
+void safe_wrapper() {
+    try {
+        dangerous_function();
+    } catch (...) {
+        // Захватываем ЛЮБОЕ исключение и сохраняем
+        saved_exception = std::current_exception();
+    }
+}
+
+void rethrow_saved() {
+    if (saved_exception) { // Проверяем, не пустое ли состояние
+        std::rethrow_exception(saved_exception);
+    }
 }
 
 int main() {
-    auto f = std::async([]() { // запускает в отдельном потоке, возвращает тип future(смотри потоки)
-        foo(0);
-    });
+    // Сохраняем исключение
+    safe_wrapper();
 
+    // Проверяем состояние
+    std::cout << "Exception ptr is " << 
+        (saved_exception ? "valid" : "empty") << "\n";
+
+    // Перебрасываем и обрабатываем
     try {
-        f.get(); // вернет то, что вернула лямбда или выкинет исключение, если оно было
-    } catch (my_exception &e) {
-        std::cout << "e=" << e.value << "\n";
+        rethrow_saved();
+    } catch (const std::exception& e) {
+        std::cout << "Caught: " << e.what() << "\n";
     }
 
-    // хотим понять как сделано такое c async, можно через:
-    
-    std::exception_ptr err;  // shared_ptr<exception>
-    // Can be created using std::make_exception_ptr or std::current_exception.
-    auto save_exception = [&]() {
-        // Can be called at any point in the program, not necessarily right inside `catch`.
-        // If there is no "current" exception, returns `exception_ptr{}`.
-        err = std::current_exception();
-    };
-
-    try {
-        foo(1);
-    } catch (...) {
-        save_exception();
-        // Out-of-scope: one can build nested exceptions: https://en.cppreference.com/w/cpp/error/nested_exception
-    }
-
-    try {
-        if (err) {
-            // The only way to 'read' `exception_ptr`.
-            std::rethrow_exception(err);  // Requires non-empty `err`.
-        } else {
-            std::cout << "no exception\n";
-        }
-    } catch (my_exception &e) {
-        std::cout << "e=" << e.value << "\n";
-    }
+    // Сбрасываем состояние
+    saved_exception = nullptr;
+    std::cout << "Now it is " << 
+        (saved_exception ? "valid" : "empty") << "\n";
 }
 ```
 
